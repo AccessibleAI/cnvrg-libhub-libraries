@@ -1,0 +1,25 @@
+---
+title: libhub-publisher
+version: 1.0.0
+description: "sample description"
+icon: python
+
+author: "cnvrg"
+author_email: "libhub@cnvrg.io"
+
+tags:
+  - train
+  - engineering
+
+command: python3 main.py
+
+requirements:
+  cpu: 1
+  memory: 1
+  gpu: 0
+  hpu: 0
+
+image: python:3.8
+language: python3
+
+arguments: []
