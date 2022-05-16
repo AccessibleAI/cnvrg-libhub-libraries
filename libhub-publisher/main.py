@@ -1,6 +1,10 @@
 import os
 import json
 import yaml
+
+from packaging.version import parse as parse_version
+
+
 os.chdir("/tmp/flow-dag")
 
 from cnvrgv2 import Cnvrg
@@ -17,7 +21,46 @@ project = cnvrg.projects.get("flow-dag")
 # project.clone()
 # exit()
 
+
 # Helper functions
+def check_if_can_upload(flow_version, enforce_library_version=False):
+    """
+    Validates that the blueprint and its libraries are fit to be uploaded to Libhub
+    @param flow_version: [Dict] The flow version from which we build the blueprint
+    @param enforce_library_version: [Boolean] Throw exception if we are trying to upload a library with lower version
+    @return: None
+    """
+
+    tasks = flow_version.dag["tasks"]
+
+    # Check if we can upload the libraries
+    for task in tasks:
+        # We want to make sure that the flow consist only from library tasks without external dependencies
+        if not task["project_library"] and not task["libhub_library"]:
+            raise Exception("Can't publish a flow with non-library tasks")
+        if task["libhub_library"]:
+            continue
+
+        library_slug = task["title"].replace(" ", "-").lower()
+        try:
+            latest_version = cnvrg.libraries.get(library_slug).versions.latest.version
+            if parse_version(task["library_version"]) <= parse_version(latest_version) and enforce_library_version:
+                raise Exception("Trying to upload a library with a version lower than the latest.")
+        except CnvrgHttpError:
+            # The library or the latest version does not exist, we can proceed
+            pass
+
+    # Check if we can upload the blueprint
+    blueprint_slug = flow_version.flow_title.replace(" ", "-").lower()
+    try:
+        latest_version = cnvrg.blueprints.get(blueprint_slug).versions.latest.version
+        if parse_version(flow_version.blueprint_version) <= parse_version(latest_version):
+            raise Exception("Trying to upload a blueprint with a version lower than the latest.")
+    except CnvrgHttpError:
+        # The library or the latest version does not exist, we can proceed
+        pass
+
+
 def create_library_json(library_info):
     library_yaml = {
         "icon": library_info["icon"] or "python",
@@ -112,12 +155,6 @@ def prepare_libraries(flow_version):
     libraries = {}
     blueprint_tasks = []
     for task in tasks:
-        # We want to make sure that the flow consist only from library tasks without external dependencies
-        if not task["project_library"] and not task["libhub_library"]:
-            raise Exception("Can't publish a flow with non-library tasks")
-        if task["libhub_library"]:
-            continue
-
         library_yaml = create_library_json(task)
         libraries[task["library_project_folder"]] = {
             "schema": library_yaml,
@@ -192,8 +229,13 @@ def prepare_blueprint(flow_version, tasks):
 
 if __name__ == "__main__":
     # Grab the flow version:
-    flow_version = project.flows.get("ngiabuinnjpd8ydptxzg").flow_versions.get("d4kfpvcqj1hmrm6djtlm")
-    # TODO: add attributes to flow version for blueprint
+    flow_version = project.flows.get("ngiabuinnjpd8ydptxzg").flow_versions.get("jj5y3qtyeey8empgvnls")
 
+    # Check if its possible to upload the blueprint and the libraries
+    check_if_can_upload(flow_version)
+
+    # Collect and upload libraries
     blueprint_tasks = prepare_libraries(flow_version)
+
+    # Collect and upload blueprint
     prepare_blueprint(flow_version, blueprint_tasks)
