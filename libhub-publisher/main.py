@@ -1,15 +1,13 @@
-import os
 import json
 import yaml
 
 from packaging.version import parse as parse_version
 
-
-os.chdir("/tmp/flow-dag")
-
-from cnvrgv2 import Cnvrg
+from cnvrgv2 import Cnvrg, FlowVersion
 from cnvrgv2.errors import CnvrgHttpError
-cnvrg = Cnvrg(domain="http://localhost:3000", email="david.robert@cnvrg.io", password="qwe123")
+
+cnvrg = Cnvrg()
+flow_version = FlowVersion()
 
 TASK_TYPES = {
     0: "data",
@@ -17,16 +15,11 @@ TASK_TYPES = {
     3: "deploy"
 }
 
-project = cnvrg.projects.get("flow-dag")
-# project.clone()
-# exit()
-
 
 # Helper functions
-def check_if_can_upload(flow_version, enforce_library_version=False):
+def check_if_can_upload(enforce_library_version=False):
     """
     Validates that the blueprint and its libraries are fit to be uploaded to Libhub
-    @param flow_version: [Dict] The flow version from which we build the blueprint
     @param enforce_library_version: [Boolean] Throw exception if we are trying to upload a library with lower version
     @return: None
     """
@@ -62,6 +55,12 @@ def check_if_can_upload(flow_version, enforce_library_version=False):
 
 
 def create_library_json(library_info):
+    """
+    Creates the library JSON/YAML representation from the task data
+    :param library_info: [Dict] The task information from the flow version
+    :return: [Dict] The relevant library information
+    """
+
     library_yaml = {
         "icon": library_info["icon"] or "python",
         "title": library_info["title"],
@@ -109,6 +108,7 @@ def find_or_create_library(name):
     @param name: The name (sluggified) of the library
     @return: [Library] The library object
     """
+
     try:
         print("Creating library {}".format(name))
         return cnvrg.libraries.create(name, public=True)
@@ -120,6 +120,15 @@ def find_or_create_library(name):
 
 
 def create_library_version(library, schema, folder, auto_bump):
+    """
+    Creates a library version in libhub
+    :param library: [Library] The library object
+    :param schema: [Dict] The library yaml schema
+    :param folder: [String] The absolute location of the library folder inside the pod
+    :param auto_bump: [Boolean] Wether we want to auto bump the library version
+    :return: [LibraryVersion] The newly created library version object
+    """
+
     print("Creating library version for {} (auto bump is {})".format(library.name, auto_bump))
     with open("{}/library.yaml".format(folder), 'w') as f:
         f.write(yaml.dump(schema))
@@ -133,6 +142,7 @@ def find_or_create_blueprint(name):
     @param name: The name (sluggified) of the library
     @return: [Blueprint] The blueprint object
     """
+
     try:
         print("Creating blueprint {}".format(name))
         return cnvrg.blueprints.create(name, public=True)
@@ -144,11 +154,23 @@ def find_or_create_blueprint(name):
 
 
 def create_blueprint_version(blueprint, schema):
+    """
+    Creates a blueprint version inside libhub
+    :param blueprint: [Blueprint] The blueprint object
+    :param schema: [Dict] The blueprint yaml schema
+    :return: [BlueprintVersion] The newly created blueprint version object
+    """
+
     print("Creating blueprint version for {}".format(blueprint.name))
     return blueprint.versions.create_version(schema)
 
 
-def prepare_libraries(flow_version):
+def prepare_libraries():
+    """
+    Creates and uploads libraries from flow version tasks and constructs blueprint task list
+    :return: [List] List of blueprint tasks
+    """
+
     print("========================================")
 
     tasks = flow_version.dag["tasks"]
@@ -180,35 +202,42 @@ def prepare_libraries(flow_version):
 
     # Create and upload libraries
     for folder in libraries:
+        abs_folder = "/cnvrg/{}".format(folder)
         auto_bump = libraries[folder]["auto_bump"]
         schema_json = libraries[folder]["schema"]
         library_name = schema_json["title"].replace(" ", "-").lower()
 
         library = find_or_create_library(library_name)
-        library_version = create_library_version(library, schema_json, folder, auto_bump)
+        library_version = create_library_version(library, schema_json, abs_folder, auto_bump)
 
         print("Uploading tar file for {} created".format(library.name))
-        library_version.upload(folder)
+        library_version.upload(abs_folder)
 
         print("========================================")
 
     return blueprint_tasks
 
 
-def prepare_blueprint(flow_version, tasks):
+def prepare_blueprint(tasks):
+    """
+    Creates the blueprint and blueprint version in libhub
+    :param tasks: [List] The blueprint task list
+    :return: None
+    """
+
     blueprint_name = flow_version.flow_title.replace(" ", "-").lower()
 
     # Prepare dict to map relation slugs to titles
-    task_slug_to_title = {}
+    task_uid_to_title = {}
     for task in flow_version.dag["tasks"]:
-        task_slug_to_title[task["slug"]] = task["title"]
+        task_uid_to_title[task["uid"]] = task["title"]
 
     # Create relations
     relations = []
     for relation in flow_version.dag["relations"]:
         relations.append({
-            "to": task_slug_to_title[relation["to"]],
-            "from": task_slug_to_title[relation["from"]],
+            "to": task_uid_to_title[relation["to"]],
+            "from": task_uid_to_title[relation["from"]],
         })
 
     blueprint_schema = {
@@ -228,14 +257,11 @@ def prepare_blueprint(flow_version, tasks):
 
 
 if __name__ == "__main__":
-    # Grab the flow version:
-    flow_version = project.flows.get("ngiabuinnjpd8ydptxzg").flow_versions.get("jj5y3qtyeey8empgvnls")
-
     # Check if its possible to upload the blueprint and the libraries
-    check_if_can_upload(flow_version)
+    check_if_can_upload()
 
     # Collect and upload libraries
-    blueprint_tasks = prepare_libraries(flow_version)
+    blueprint_tasks = prepare_libraries()
 
     # Collect and upload blueprint
-    prepare_blueprint(flow_version, blueprint_tasks)
+    prepare_blueprint(blueprint_tasks)
